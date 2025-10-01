@@ -8,10 +8,28 @@ const state = {
 const rulesContainer = document.getElementById("rulesContainer");
 const errorAlert = document.getElementById("errorAlert");
 const refreshButton = document.getElementById("refreshButton");
-const addRuleForm = document.getElementById("addRuleForm");
+const addRuleButton = document.getElementById("addRuleButton");
 const searchInput = document.getElementById("searchInput");
 const viewChains = document.getElementById("viewChains");
 const viewTargets = document.getElementById("viewTargets");
+const ruleModalElement = document.getElementById("ruleModal");
+const ruleForm = document.getElementById("ruleForm");
+const ruleFormAlert = document.getElementById("ruleFormAlert");
+const ruleModalLabel = document.getElementById("ruleModalLabel");
+const ruleModalSubmit = document.getElementById("ruleModalSubmit");
+const ruleChainSelect = document.getElementById("ruleChain");
+const ruleTargetSelect = document.getElementById("ruleTarget");
+const rulePortTypeSelect = document.getElementById("rulePortType");
+
+const ruleModalInstance =
+  ruleModalElement && typeof bootstrap !== "undefined"
+    ? new bootstrap.Modal(ruleModalElement)
+    : null;
+
+const currentRuleContext = {
+  mode: "create",
+  chain: null,
+};
 
 function setLoading(isLoading) {
   state.loading = isLoading;
@@ -29,6 +47,7 @@ async function fetchRules() {
       throw new Error(data.error || "获取规则失败");
     }
     state.chains = data.chains || [];
+    refreshChainSelectOptions(currentRuleContext.chain);
     render();
   } catch (error) {
     showError(error.message);
@@ -47,38 +66,6 @@ function hideError() {
   errorAlert.textContent = "";
 }
 
-function handleAddRule(event) {
-  event.preventDefault();
-  const formData = new FormData(addRuleForm);
-  const payload = {
-    chain: formData.get("chain").trim(),
-    specification: formData.get("specification").trim(),
-  };
-  const position = formData.get("position");
-  if (position) {
-    payload.position = Number(position);
-  }
-
-  fetch("/api/rules", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  })
-    .then(async (response) => {
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "添加规则失败");
-      }
-      addRuleForm.reset();
-      fetchRules();
-    })
-    .catch((error) => {
-      showError(error.message);
-    });
-}
-
 function confirmAndDelete(chain, number) {
   if (!confirm(`确定删除 ${chain} 链中的第 ${number} 条规则吗？`)) {
     return;
@@ -94,6 +81,222 @@ function confirmAndDelete(chain, number) {
       fetchRules();
     })
     .catch((error) => showError(error.message));
+}
+
+function getPreferredChainName() {
+  if (!state.chains.length) {
+    return "";
+  }
+  const preferredOrder = ["INPUT", "FORWARD", "OUTPUT"];
+  for (const preferred of preferredOrder) {
+    if (state.chains.some((chain) => chain.name === preferred)) {
+      return preferred;
+    }
+  }
+  return state.chains[0].name;
+}
+
+function populateChainOptions(selectedChain) {
+  if (!ruleChainSelect) {
+    return;
+  }
+
+  const desiredValue = selectedChain && state.chains.some((c) => c.name === selectedChain)
+    ? selectedChain
+    : "";
+
+  ruleChainSelect.innerHTML = "";
+
+  if (!state.chains.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "暂无可用链";
+    option.disabled = true;
+    option.selected = true;
+    ruleChainSelect.appendChild(option);
+    ruleChainSelect.disabled = true;
+    return;
+  }
+
+  state.chains.forEach((chain) => {
+    const option = document.createElement("option");
+    option.value = chain.name;
+    option.textContent = chain.name;
+    ruleChainSelect.appendChild(option);
+  });
+
+  const valueToSet = desiredValue || getPreferredChainName();
+  if (valueToSet) {
+    ruleChainSelect.value = valueToSet;
+  }
+
+  ruleChainSelect.disabled = state.chains.length === 0;
+}
+
+function refreshChainSelectOptions(selectedChain) {
+  if (!ruleChainSelect) {
+    return;
+  }
+  populateChainOptions(selectedChain || ruleChainSelect.value);
+}
+
+function hideRuleFormError() {
+  if (!ruleFormAlert) {
+    return;
+  }
+  ruleFormAlert.textContent = "";
+  ruleFormAlert.classList.add("d-none");
+}
+
+function showRuleFormError(message) {
+  if (!ruleFormAlert) {
+    showError(message);
+    return;
+  }
+  ruleFormAlert.textContent = message;
+  ruleFormAlert.classList.remove("d-none");
+}
+
+function buildSpecificationFromForm(formData) {
+  const parts = [];
+
+  const protocol = (formData.get("protocol") || "").trim();
+  if (protocol) {
+    parts.push(`-p ${protocol}`);
+  }
+
+  const inInterface = (formData.get("inInterface") || "").trim();
+  if (inInterface) {
+    parts.push(`-i ${inInterface}`);
+  }
+
+  const outInterface = (formData.get("outInterface") || "").trim();
+  if (outInterface) {
+    parts.push(`-o ${outInterface}`);
+  }
+
+  const source = (formData.get("source") || "").trim();
+  if (source) {
+    parts.push(`-s ${source}`);
+  }
+
+  const destination = (formData.get("destination") || "").trim();
+  if (destination) {
+    parts.push(`-d ${destination}`);
+  }
+
+  const port = (formData.get("port") || "").trim();
+  if (port) {
+    const portFlag = formData.get("portType") === "sport" ? "--sport" : "--dport";
+    parts.push(`${portFlag} ${port}`);
+  }
+
+  const extra = (formData.get("extra") || "").trim();
+  if (extra) {
+    parts.push(extra);
+  }
+
+  const target = (formData.get("target") || "").trim();
+  if (target) {
+    parts.push(`-j ${target}`);
+  }
+
+  return parts.join(" ").trim();
+}
+
+function openRuleModal({ mode = "create", chain = null } = {}) {
+  if (!ruleModalInstance || !ruleForm) {
+    return;
+  }
+
+  hideRuleFormError();
+  hideError();
+
+  currentRuleContext.mode = mode;
+  currentRuleContext.chain = chain;
+
+  ruleForm.reset();
+  refreshChainSelectOptions(chain);
+
+  if (ruleModalLabel) {
+    ruleModalLabel.textContent = mode === "create" ? "新增规则" : "编辑规则";
+  }
+
+  if (ruleModalSubmit) {
+    ruleModalSubmit.textContent = mode === "create" ? "保存规则" : "更新规则";
+  }
+
+  if (ruleTargetSelect) {
+    ruleTargetSelect.value = "ACCEPT";
+  }
+
+  if (rulePortTypeSelect) {
+    rulePortTypeSelect.value = "dport";
+  }
+
+  ruleModalInstance.show();
+}
+
+async function handleRuleFormSubmit(event) {
+  event.preventDefault();
+  if (!ruleForm) {
+    return;
+  }
+
+  hideRuleFormError();
+  hideError();
+
+  const formData = new FormData(ruleForm);
+  const chain = (formData.get("chain") || "").trim();
+  if (!chain) {
+    showRuleFormError("请选择链名称");
+    return;
+  }
+
+  const specification = buildSpecificationFromForm(formData);
+  if (!specification) {
+    showRuleFormError("请完善规则参数");
+    return;
+  }
+
+  const payload = { chain, specification };
+  const position = (formData.get("position") || "").trim();
+  if (position) {
+    payload.position = Number(position);
+  }
+
+  if (ruleModalSubmit) {
+    ruleModalSubmit.disabled = true;
+    ruleModalSubmit.textContent = "保存中...";
+  }
+
+  try {
+    const response = await fetch("/api/rules", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "添加规则失败");
+    }
+
+    ruleForm.reset();
+    if (ruleModalInstance) {
+      ruleModalInstance.hide();
+    }
+    fetchRules();
+  } catch (error) {
+    showRuleFormError(error.message);
+  } finally {
+    if (ruleModalSubmit) {
+      ruleModalSubmit.disabled = false;
+      ruleModalSubmit.textContent = currentRuleContext.mode === "create" ? "保存规则" : "更新规则";
+    }
+  }
 }
 
 function editRule(chain, number) {
@@ -310,7 +513,14 @@ function render() {
 }
 
 refreshButton.addEventListener("click", fetchRules);
-addRuleForm.addEventListener("submit", handleAddRule);
+
+if (addRuleButton) {
+  addRuleButton.addEventListener("click", () => openRuleModal({ mode: "create" }));
+}
+
+if (ruleForm) {
+  ruleForm.addEventListener("submit", handleRuleFormSubmit);
+}
 viewChains.addEventListener("change", () => {
   if (viewChains.checked) {
     state.viewMode = "chain";

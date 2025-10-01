@@ -17,6 +17,9 @@
       <div class="container-fluid">
         <span class="navbar-brand">ARM 设备防火墙管理工具</span>
         <div class="d-flex gap-2">
+          <button id="addRuleButton" class="btn btn-outline-light btn-sm">
+            新增规则
+          </button>
           <button id="refreshButton" class="btn btn-light btn-sm">
             立即刷新
           </button>
@@ -28,51 +31,6 @@
       <div class="row g-4">
         <section class="col-12 col-lg-4">
           <div class="card shadow-sm">
-            <div class="card-header bg-white">
-              <h2 class="h5 mb-0">新增规则</h2>
-            </div>
-            <div class="card-body">
-              <form id="addRuleForm" class="vstack gap-3">
-                <div>
-                  <label class="form-label" for="chainInput">链 (Chain)</label>
-                  <input
-                    class="form-control"
-                    id="chainInput"
-                    name="chain"
-                    placeholder="如：INPUT"
-                    required
-                  />
-                </div>
-                <div>
-                  <label class="form-label" for="specInput">规则参数</label>
-                  <textarea
-                    class="form-control"
-                    id="specInput"
-                    name="specification"
-                    rows="3"
-                    placeholder="例如：-p tcp --dport 8080 -j ACCEPT"
-                    required
-                  ></textarea>
-                  <div class="form-text">
-                    这里填写 <code>iptables</code> 命令中链名称后的参数片段。
-                  </div>
-                </div>
-                <div>
-                  <label class="form-label" for="positionInput">插入位置 (可选)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    class="form-control"
-                    id="positionInput"
-                    name="position"
-                    placeholder="不填则追加到链尾"
-                  />
-                </div>
-                <button class="btn btn-primary" type="submit">添加规则</button>
-              </form>
-            </div>
-          </div>
-          <div class="card shadow-sm mt-4">
             <div class="card-header bg-white">
               <h2 class="h5 mb-0">视图选项</h2>
             </div>
@@ -119,6 +77,144 @@
         </section>
       </div>
     </main>
+
+    <div
+      class="modal fade"
+      id="ruleModal"
+      tabindex="-1"
+      aria-labelledby="ruleModalLabel"
+      aria-hidden="true"
+    >
+      <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+          <form id="ruleForm" novalidate>
+            <div class="modal-header">
+              <h2 class="modal-title fs-5" id="ruleModalLabel">新增规则</h2>
+              <button
+                type="button"
+                class="btn-close"
+                data-bs-dismiss="modal"
+                aria-label="关闭"
+              ></button>
+            </div>
+            <div class="modal-body">
+              <div
+                id="ruleFormAlert"
+                class="alert alert-danger d-none"
+                role="alert"
+              ></div>
+              <div class="row g-3">
+                <div class="col-12 col-lg-6">
+                  <label class="form-label" for="ruleChain">链 (Chain)</label>
+                  <select class="form-select" id="ruleChain" name="chain" required></select>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label" for="rulePosition">插入位置 (可选)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    class="form-control"
+                    id="rulePosition"
+                    name="position"
+                    placeholder="不填则追加到链尾"
+                  />
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label" for="ruleProtocol">协议</label>
+                  <select class="form-select" id="ruleProtocol" name="protocol">
+                    <option value="">任意</option>
+                    <option value="tcp">TCP</option>
+                    <option value="udp">UDP</option>
+                    <option value="icmp">ICMP</option>
+                  </select>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label" for="ruleTarget">动作</label>
+                  <select class="form-select" id="ruleTarget" name="target" required>
+                    <option value="ACCEPT">ACCEPT</option>
+                    <option value="DROP">DROP</option>
+                    <option value="REJECT">REJECT</option>
+                  </select>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label" for="rulePort">端口</label>
+                  <div class="input-group">
+                    <select class="form-select" id="rulePortType" name="portType">
+                      <option value="dport">目的端口 (--dport)</option>
+                      <option value="sport">源端口 (--sport)</option>
+                    </select>
+                    <input
+                      type="text"
+                      class="form-control"
+                      id="rulePort"
+                      name="port"
+                      placeholder="如：80 或 1000:2000"
+                    />
+                  </div>
+                  <div class="form-text">端口字段保留手动输入，可填写单个或范围。</div>
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label" for="ruleInInterface">入站网卡 (可选)</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="ruleInInterface"
+                    name="inInterface"
+                    placeholder="例如：eth0"
+                  />
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label" for="ruleOutInterface">出站网卡 (可选)</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="ruleOutInterface"
+                    name="outInterface"
+                    placeholder="例如：eth1"
+                  />
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label" for="ruleSource">源地址 (可选)</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="ruleSource"
+                    name="source"
+                    placeholder="例如：192.168.0.1/24"
+                  />
+                </div>
+                <div class="col-12 col-lg-6">
+                  <label class="form-label" for="ruleDestination">目的地址 (可选)</label>
+                  <input
+                    type="text"
+                    class="form-control"
+                    id="ruleDestination"
+                    name="destination"
+                    placeholder="例如：10.0.0.1/24"
+                  />
+                </div>
+                <div class="col-12">
+                  <label class="form-label" for="ruleExtra">附加参数 (可选)</label>
+                  <textarea
+                    class="form-control"
+                    id="ruleExtra"
+                    name="extra"
+                    rows="2"
+                    placeholder="例如：-m state --state RELATED,ESTABLISHED"
+                  ></textarea>
+                </div>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">
+                取消
+              </button>
+              <button type="submit" class="btn btn-primary" id="ruleModalSubmit">保存规则</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
 
     <script
       src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"

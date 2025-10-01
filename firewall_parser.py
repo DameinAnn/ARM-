@@ -10,6 +10,7 @@ import re
 class RuleDetail:
     label: str
     value: Optional[str] = None
+    key: Optional[str] = None
 
 
 @dataclass
@@ -56,9 +57,19 @@ def _parse_rule_details(extra: List[str]) -> List[RuleDetail]:
     details: List[RuleDetail] = []
     prefix_parts: List[str] = []
 
-    def push(label: str, value_tokens: List[str]) -> None:
+    def normalise_key(raw: Optional[str]) -> Optional[str]:
+        if not raw:
+            return None
+        key = raw.strip().lower().rstrip(":")
+        if not key:
+            return None
+        return key
+
+    def push(label: str, value_tokens: List[str], key: Optional[str] = None) -> None:
         value = " ".join(value_tokens).strip() if value_tokens else None
-        details.append(RuleDetail(label=label.strip(), value=value or None))
+        details.append(
+            RuleDetail(label=label.strip(), value=value or None, key=normalise_key(key))
+        )
 
     i = 0
     length = len(extra)
@@ -81,7 +92,7 @@ def _parse_rule_details(extra: List[str]) -> List[RuleDetail]:
                 value_tokens.append(lookahead)
                 i += 1
 
-            push(label or label_part, value_tokens)
+            push(label or label_part, value_tokens, label_part)
             continue
 
         # token without colon may serve as prefix for the next colon token
@@ -103,10 +114,10 @@ def _parse_rule_details(extra: List[str]) -> List[RuleDetail]:
             value_tokens.append(lookahead)
             i += 1
 
-        push(" ".join(label_tokens), value_tokens)
+        push(" ".join(label_tokens), value_tokens, label_tokens[-1] if label_tokens else None)
 
     if prefix_parts:
-        push(" ".join(prefix_parts), [])
+        push(" ".join(prefix_parts), [], prefix_parts[-1] if prefix_parts else None)
 
     return details
 

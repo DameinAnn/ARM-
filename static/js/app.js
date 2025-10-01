@@ -2,6 +2,16 @@ const CHAIN_OPTIONS = ["INPUT", "OUTPUT", "FORWARD", "PREROUTING", "POSTROUTING"
 const TARGET_OPTIONS = ["ACCEPT", "DROP", "REJECT", "LOG", "RETURN"];
 const PROTOCOL_OPTIONS = ["tcp", "udp", "icmp", "all"];
 const ADDRESS_OPTIONS = ["0.0.0.0/0", "127.0.0.1", "192.168.0.0/16", "10.0.0.0/8", "::/0"];
+
+const escapeHtml = (value) => {
+  const div = document.createElement("div");
+  div.textContent = value ?? "";
+  return div.innerHTML;
+};
+
+if (typeof window !== "undefined") {
+  window.escapeHtml = window.escapeHtml || escapeHtml;
+}
 const PORT_KEYS = new Set(["dpt", "dport", "spt", "sport"]);
 const state = {
   chains: [],

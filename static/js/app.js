@@ -1,3 +1,31 @@
+const CHAIN_OPTIONS = ["INPUT", "OUTPUT", "FORWARD", "PREROUTING", "POSTROUTING"];
+const TARGET_OPTIONS = ["ACCEPT", "DROP", "REJECT", "LOG", "RETURN"];
+const PROTOCOL_OPTIONS = ["tcp", "udp", "icmp", "all"];
+const ADDRESS_OPTIONS = ["0.0.0.0/0", "127.0.0.1", "192.168.0.0/16", "10.0.0.0/8", "::/0"];
+const PORT_KEYS = new Set(["dpt", "dport", "spt", "sport"]);
+const TARGET_VISUALS = {
+  ACCEPT: {
+    icon: "bi-check-circle-fill",
+    badgeClass: "target-badge target-badge-accept",
+  },
+  DROP: {
+    icon: "bi-slash-circle",
+    badgeClass: "target-badge target-badge-drop",
+  },
+  REJECT: {
+    icon: "bi-x-octagon",
+    badgeClass: "target-badge target-badge-reject",
+  },
+  LOG: {
+    icon: "bi-clipboard-data",
+    badgeClass: "target-badge target-badge-log",
+  },
+  RETURN: {
+    icon: "bi-arrow-return-left",
+    badgeClass: "target-badge target-badge-return",
+  },
+};
+
 const state = {
   chains: [],
   viewMode: "chain",
@@ -8,10 +36,459 @@ const state = {
 const rulesContainer = document.getElementById("rulesContainer");
 const errorAlert = document.getElementById("errorAlert");
 const refreshButton = document.getElementById("refreshButton");
-const addRuleForm = document.getElementById("addRuleForm");
+const addRuleButton = document.getElementById("addRuleButton");
 const searchInput = document.getElementById("searchInput");
 const viewChains = document.getElementById("viewChains");
 const viewTargets = document.getElementById("viewTargets");
+const ruleModalElement = document.getElementById("ruleModal");
+const ruleModalForm = document.getElementById("ruleModalForm");
+const ruleModalTitle = document.getElementById("ruleModalLabel");
+const ruleModalChainSelect = document.getElementById("ruleChainSelect");
+const ruleModalTargetSelect = document.getElementById("ruleTargetSelect");
+const ruleModalProtocolSelect = document.getElementById("ruleProtocolSelect");
+const ruleModalSourceSelect = document.getElementById("ruleSourceSelect");
+const ruleModalDestinationSelect = document.getElementById("ruleDestinationSelect");
+const ruleSourcePortInput = document.getElementById("ruleSourcePortInput");
+const ruleDestinationPortInput = document.getElementById("ruleDestinationPortInput");
+const ruleAdvancedInput = document.getElementById("ruleAdvancedInput");
+const ruleModalSaveButton = document.getElementById("ruleModalSaveButton");
+const ruleModal = ruleModalElement ? new bootstrap.Modal(ruleModalElement) : null;
+
+let ruleModalContext = null;
+
+function uniqueOptions(...groups) {
+  const seen = new Set();
+  const result = [];
+  groups.forEach((group) => {
+    if (!group) {
+      return;
+    }
+    const iterable = Array.isArray(group)
+      ? group
+      : group instanceof Set
+      ? Array.from(group)
+      : [group];
+    iterable.forEach((value) => {
+      if (!value || seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      result.push(value);
+    });
+  });
+  return result;
+}
+
+function escapeHtml(value) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function getTargetVisual(target) {
+  const key = (target || "").toUpperCase();
+  return (
+    TARGET_VISUALS[key] || {
+      icon: "bi-sliders",
+      badgeClass: "target-badge target-badge-default",
+    }
+  );
+}
+
+function getPortValue(rule, type) {
+  const details = (rule && rule.details) || [];
+  if (type === "source") {
+    return extractPort(details, "spt") || extractPort(details, "sport") || "";
+  }
+  if (type === "destination") {
+    return extractPort(details, "dpt") || extractPort(details, "dport") || "";
+  }
+  return "";
+}
+
+function buildPortSummary(sourcePort, destinationPort) {
+  const parts = [];
+  if (sourcePort) {
+    parts.push(`源 ${escapeHtml(sourcePort)}`);
+  }
+  if (destinationPort) {
+    parts.push(`目的 ${escapeHtml(destinationPort)}`);
+  }
+  if (!parts.length) {
+    return "未指定端口";
+  }
+  return parts.join(" ｜ ");
+}
+
+function buildRuleActionButtons(chainName, ruleNumber) {
+  return `
+    <div class="rule-actions d-flex flex-wrap gap-2">
+      <button
+        class="btn btn-sm btn-outline-secondary"
+        data-action="edit"
+        data-chain="${escapeHtml(chainName)}"
+        data-number="${Number(ruleNumber)}"
+      >
+        编辑
+      </button>
+      <button
+        class="btn btn-sm btn-outline-danger"
+        data-action="delete"
+        data-chain="${escapeHtml(chainName)}"
+        data-number="${Number(ruleNumber)}"
+      >
+        删除
+      </button>
+    </div>
+  `;
+}
+
+function buildCollapseId(chainName, ruleNumber) {
+  return `rule-${chainName}-${ruleNumber}`.replace(/[^a-zA-Z0-9_-]/g, "-");
+}
+
+function populateSelect(select, options, selectedValue = "") {
+  if (!select) {
+    return;
+  }
+  const seen = new Set();
+  select.innerHTML = "";
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "请选择";
+  select.appendChild(placeholder);
+
+  options.forEach((value) => {
+    if (!value || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+
+  if (selectedValue && !seen.has(selectedValue)) {
+    const option = document.createElement("option");
+    option.value = selectedValue;
+    option.textContent = selectedValue;
+    select.appendChild(option);
+    seen.add(selectedValue);
+  }
+
+  select.value = selectedValue || "";
+}
+
+function extractPort(details, key) {
+  if (!details) {
+    return "";
+  }
+  const lowerKey = key.toLowerCase();
+  const match = details.find((detail) => {
+    if (!detail) {
+      return false;
+    }
+    const detailKey = (detail.key || "").toLowerCase();
+    if (detailKey === lowerKey) {
+      return true;
+    }
+    const label = (detail.label || "").toLowerCase();
+    return label === lowerKey || label.endsWith(` ${lowerKey}`);
+  });
+  return match && match.value ? match.value : "";
+}
+
+function buildAdvancedText(rule) {
+  if (!rule) {
+    return "";
+  }
+  const segments = [];
+  if (rule.option && rule.option !== "--") {
+    segments.push(rule.option);
+  }
+  (rule.details || []).forEach((detail) => {
+    if (!detail) {
+      return;
+    }
+    const key = (detail.key || "").toLowerCase();
+    if (PORT_KEYS.has(key)) {
+      return;
+    }
+    const label = (detail.label || "").trim();
+    const value = (detail.value || "").trim();
+    if (!label && !value) {
+      return;
+    }
+    if (label && value) {
+      segments.push(`${label}:${value}`);
+    } else {
+      segments.push(label || value);
+    }
+  });
+  return segments.join(" ").trim();
+}
+
+if (ruleModalElement) {
+  ruleModalElement.addEventListener("hidden.bs.modal", () => {
+    ruleModalContext = null;
+    if (ruleModalForm) {
+      ruleModalForm.reset();
+    }
+    if (ruleModalChainSelect) {
+      ruleModalChainSelect.disabled = false;
+    }
+    if (ruleSourcePortInput) {
+      ruleSourcePortInput.value = "";
+    }
+    if (ruleDestinationPortInput) {
+      ruleDestinationPortInput.value = "";
+    }
+    if (ruleAdvancedInput) {
+      ruleAdvancedInput.value = "";
+    }
+  });
+}
+
+function openRuleModal({ mode, initialRule }) {
+  if (!ruleModal || !ruleModalForm) {
+    console.warn("Rule modal is not available in this context.");
+    return;
+  }
+
+  const preparedRule = initialRule
+    ? {
+        ...initialRule,
+        details: (initialRule.details || []).map((detail) => ({ ...detail })),
+      }
+    : null;
+
+  ruleModalContext = { mode, initialRule: preparedRule };
+  ruleModalForm.reset();
+
+  const chainOptions = uniqueOptions(
+    CHAIN_OPTIONS,
+    state.chains.map((chain) => chain.name),
+    preparedRule ? [preparedRule.chain] : []
+  );
+  const defaultChain = preparedRule
+    ? preparedRule.chain
+    : chainOptions.find((option) => option && option.toUpperCase() === "INPUT") ||
+      chainOptions[0] ||
+      "";
+  const targetOptions = uniqueOptions(
+    TARGET_OPTIONS,
+    state.chains.flatMap((chain) => chain.rules.map((rule) => rule.target)),
+    preparedRule ? [preparedRule.target] : []
+  );
+  const protocolOptions = uniqueOptions(
+    PROTOCOL_OPTIONS,
+    state.chains.flatMap((chain) => chain.rules.map((rule) => rule.protocol)),
+    preparedRule ? [preparedRule.protocol] : []
+  );
+  const sourceOptions = uniqueOptions(
+    ADDRESS_OPTIONS,
+    state.chains.flatMap((chain) => chain.rules.map((rule) => rule.source)),
+    preparedRule ? [preparedRule.source] : []
+  );
+  const destinationOptions = uniqueOptions(
+    ADDRESS_OPTIONS,
+    state.chains.flatMap((chain) => chain.rules.map((rule) => rule.destination)),
+    preparedRule ? [preparedRule.destination] : []
+  );
+
+  populateSelect(ruleModalChainSelect, chainOptions, defaultChain);
+  populateSelect(
+    ruleModalTargetSelect,
+    targetOptions,
+    preparedRule ? preparedRule.target : ""
+  );
+  populateSelect(
+    ruleModalProtocolSelect,
+    protocolOptions,
+    preparedRule ? preparedRule.protocol : ""
+  );
+  populateSelect(
+    ruleModalSourceSelect,
+    sourceOptions,
+    preparedRule ? preparedRule.source : ""
+  );
+  populateSelect(
+    ruleModalDestinationSelect,
+    destinationOptions,
+    preparedRule ? preparedRule.destination : ""
+  );
+
+  if (ruleModalChainSelect) {
+    ruleModalChainSelect.disabled = mode === "edit";
+  }
+  if (ruleModalTitle) {
+    ruleModalTitle.textContent = mode === "edit" ? "编辑规则" : "新增规则";
+  }
+  if (ruleModalSaveButton) {
+    ruleModalSaveButton.textContent = mode === "edit" ? "保存修改" : "保存";
+  }
+
+  const details = preparedRule ? preparedRule.details || [] : [];
+  if (ruleSourcePortInput) {
+    const sourcePort = preparedRule
+      ? extractPort(details, "spt") || extractPort(details, "sport")
+      : "";
+    ruleSourcePortInput.value = sourcePort;
+  }
+  if (ruleDestinationPortInput) {
+    const destinationPort = preparedRule
+      ? extractPort(details, "dpt") || extractPort(details, "dport")
+      : "";
+    ruleDestinationPortInput.value = destinationPort;
+  }
+  if (ruleAdvancedInput) {
+    ruleAdvancedInput.value = preparedRule ? buildAdvancedText(preparedRule) : "";
+  }
+
+  ruleModal.show();
+}
+
+async function handleRuleModalSubmit(event) {
+  if (!ruleModalContext) {
+    return;
+  }
+  event.preventDefault();
+
+  const { mode, initialRule } = ruleModalContext;
+  const chainValue = ruleModalChainSelect
+    ? ruleModalChainSelect.value || (initialRule ? initialRule.chain : "")
+    : initialRule?.chain || "";
+  const targetValue = ruleModalTargetSelect ? ruleModalTargetSelect.value : "";
+  const protocolValue = ruleModalProtocolSelect
+    ? ruleModalProtocolSelect.value
+    : "";
+  const sourceValue = ruleModalSourceSelect ? ruleModalSourceSelect.value : "";
+  const destinationValue = ruleModalDestinationSelect
+    ? ruleModalDestinationSelect.value
+    : "";
+  const sourcePortValue = ruleSourcePortInput ? ruleSourcePortInput.value.trim() : "";
+  const destinationPortValue = ruleDestinationPortInput
+    ? ruleDestinationPortInput.value.trim()
+    : "";
+  const advancedValue = ruleAdvancedInput ? ruleAdvancedInput.value.trim() : "";
+
+  if (!chainValue) {
+    alert("请选择链 (Chain)");
+    return;
+  }
+  if (!targetValue) {
+    alert("请选择行为 (Target)");
+    return;
+  }
+
+  const specParts = [];
+  if (protocolValue && protocolValue !== "all") {
+    specParts.push(`-p ${protocolValue}`);
+  }
+  if (sourceValue) {
+    specParts.push(`-s ${sourceValue}`);
+  }
+  if (destinationValue) {
+    specParts.push(`-d ${destinationValue}`);
+  }
+  if (sourcePortValue) {
+    specParts.push(`--sport ${sourcePortValue}`);
+  }
+  if (destinationPortValue) {
+    specParts.push(`--dport ${destinationPortValue}`);
+  }
+  specParts.push(`-j ${targetValue}`);
+
+  let specification = specParts.join(" ").trim();
+  if (advancedValue) {
+    specification = specification
+      ? `${specification} ${advancedValue}`
+      : advancedValue;
+  }
+
+  if (!specification) {
+    alert("请填写规则参数");
+    return;
+  }
+
+  const originalText = ruleModalSaveButton ? ruleModalSaveButton.textContent : "";
+  if (ruleModalSaveButton) {
+    ruleModalSaveButton.disabled = true;
+    ruleModalSaveButton.textContent = "保存中...";
+  }
+
+  hideError();
+
+  try {
+    if (mode === "edit" && initialRule) {
+      const url = `/api/rules/${encodeURIComponent(initialRule.chain)}/${initialRule.number}`;
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ specification }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "更新规则失败");
+      }
+      ruleModal.hide();
+      fetchRules();
+    } else if (mode === "create") {
+      const response = await fetch("/api/rules", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          chain: chainValue,
+          specification,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "添加规则失败");
+      }
+      ruleModal.hide();
+      fetchRules();
+    } else {
+      console.warn(`Unsupported modal mode: ${mode}`);
+    }
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    if (ruleModalSaveButton) {
+      ruleModalSaveButton.disabled = false;
+      ruleModalSaveButton.textContent = originalText || "保存";
+    }
+  }
+}
+
+function handleEditRule(chainName, number) {
+  const chain = state.chains.find((item) => item.name === chainName);
+  if (!chain) {
+    return;
+  }
+  const rule = chain.rules.find((item) => item.number === number);
+  if (!rule) {
+    return;
+  }
+  const initialRule = {
+    ...rule,
+    chain: chain.name,
+    details: (rule.details || []).map((detail) => ({ ...detail })),
+  };
+  openRuleModal({ mode: "edit", initialRule });
+}
 
 function setLoading(isLoading) {
   state.loading = isLoading;
@@ -47,38 +524,6 @@ function hideError() {
   errorAlert.textContent = "";
 }
 
-function handleAddRule(event) {
-  event.preventDefault();
-  const formData = new FormData(addRuleForm);
-  const payload = {
-    chain: formData.get("chain").trim(),
-    specification: formData.get("specification").trim(),
-  };
-  const position = formData.get("position");
-  if (position) {
-    payload.position = Number(position);
-  }
-
-  fetch("/api/rules", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  })
-    .then(async (response) => {
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "添加规则失败");
-      }
-      addRuleForm.reset();
-      fetchRules();
-    })
-    .catch((error) => {
-      showError(error.message);
-    });
-}
-
 function confirmAndDelete(chain, number) {
   if (!confirm(`确定删除 ${chain} 链中的第 ${number} 条规则吗？`)) {
     return;
@@ -90,30 +535,6 @@ function confirmAndDelete(chain, number) {
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "删除规则失败");
-      }
-      fetchRules();
-    })
-    .catch((error) => showError(error.message));
-}
-
-function editRule(chain, number) {
-  const specification = prompt(
-    `请输入替换 ${chain} 链第 ${number} 条规则的参数片段：`
-  );
-  if (!specification) {
-    return;
-  }
-  fetch(`/api/rules/${encodeURIComponent(chain)}/${number}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ specification }),
-  })
-    .then(async (response) => {
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "更新规则失败");
       }
       fetchRules();
     })
@@ -147,20 +568,25 @@ function filterChains() {
     .filter((chain) => chain.rules.length > 0);
 }
 
-function createDetailBadges(details) {
+function createDetailBadges(details, limit = Infinity) {
   if (!details || details.length === 0) {
     return "";
   }
-  return `
-    <div class="d-flex flex-wrap gap-2">
-      ${details
-        .map((detail) => {
-          const value = detail.value ? `<span>${detail.value}</span>` : "";
-          return `<span class="rule-detail-badge">${detail.label}${value}</span>`;
-        })
-        .join("")}
-    </div>
-  `;
+  const visibleDetails =
+    limit === Infinity ? details : details.slice(0, Math.max(0, limit));
+  const remaining = Math.max(details.length - visibleDetails.length, 0);
+  const badges = visibleDetails
+    .map((detail) => {
+      const label = escapeHtml(detail.label || "");
+      const value = detail.value ? `<span>${escapeHtml(detail.value)}</span>` : "";
+      return `<span class="rule-detail-badge">${label}${value}</span>`;
+    })
+    .join("");
+  const remainderBadge =
+    remaining > 0
+      ? `<span class="rule-detail-badge rule-detail-badge-muted">+${remaining}</span>`
+      : "";
+  return `<div class="rule-detail-badges d-flex flex-wrap gap-2">${badges}${remainderBadge}</div>`;
 }
 
 function renderChainView(chains) {
@@ -174,69 +600,125 @@ function renderChainView(chains) {
 
   rulesContainer.innerHTML = chains
     .map((chain) => {
-      const headerMeta = [
-        chain.policy ? `策略：<strong>${chain.policy}</strong>` : null,
-        typeof chain.references === "number"
-          ? `引用：<strong>${chain.references}</strong>`
-          : null,
-      ]
-        .filter(Boolean)
-        .join(" · ");
+      const metaItems = [];
+      if (chain.policy) {
+        metaItems.push(
+          `<span><i class="bi bi-shield-lock me-1"></i>策略：${escapeHtml(chain.policy)}</span>`
+        );
+      }
+      if (typeof chain.references === "number") {
+        metaItems.push(
+          `<span><i class="bi bi-link-45deg me-1"></i>引用：${escapeHtml(chain.references)}</span>`
+        );
+      }
+      metaItems.push(
+        `<span><i class="bi bi-list-ol me-1"></i>规则：${escapeHtml(
+          (chain.rules || []).length
+        )}</span>`
+      );
 
-      const rows = chain.rules
-        .map(
-          (rule) => `
-            <tr>
-              <td class="fw-semibold">${rule.number}</td>
-              <td>${rule.target}</td>
-              <td>${rule.protocol}</td>
-              <td>${rule.option}</td>
-              <td>${rule.source}</td>
-              <td>${rule.destination}</td>
-              <td>${createDetailBadges(rule.details)}</td>
-              <td class="rule-actions text-end">
-                <button class="btn btn-sm btn-outline-secondary me-2" data-action="edit" data-chain="${chain.name}" data-number="${rule.number}">编辑</button>
-                <button class="btn btn-sm btn-outline-danger" data-action="delete" data-chain="${chain.name}" data-number="${rule.number}">删除</button>
-              </td>
-            </tr>
-          `
-        )
+      const rulesMarkup = (chain.rules || [])
+        .map((rule) => {
+          const collapseId = buildCollapseId(chain.name, rule.number);
+          const targetVisual = getTargetVisual(rule.target);
+          const protocolLabel = (rule.protocol || "ALL").toUpperCase();
+          const sourcePort = getPortValue(rule, "source");
+          const destinationPort = getPortValue(rule, "destination");
+          const portSummary = buildPortSummary(sourcePort, destinationPort);
+          const detailPreview = createDetailBadges(rule.details, 2);
+          const fullDetails = createDetailBadges(rule.details);
+          const optionText = rule.option && rule.option !== "--" ? rule.option : "";
+          const rawText = rule.raw ? `<code>${escapeHtml(rule.raw)}</code>` : "";
+
+          return `
+            <div class="rule-card card-subtle">
+              <div class="rule-overview d-flex flex-column flex-lg-row gap-3">
+                <div class="rule-overview-primary flex-lg-grow-1">
+                  <div class="d-flex flex-wrap align-items-center gap-2">
+                    <span class="${targetVisual.badgeClass}">
+                      <i class="bi ${targetVisual.icon} me-1"></i>${escapeHtml(
+                        rule.target || "未知"
+                      )}
+                    </span>
+                    <span class="rule-protocol-chip">
+                      <i class="bi bi-diagram-3 me-1"></i>${escapeHtml(protocolLabel)}
+                    </span>
+                  </div>
+                  <div class="rule-port-summary text-muted small mt-2">
+                    <i class="bi bi-plug me-1"></i>${portSummary}
+                  </div>
+                </div>
+                <div class="rule-overview-secondary flex-lg-grow-1">
+                  <div class="rule-address text-muted small">
+                    <i class="bi bi-arrow-up-right-circle me-1 text-primary"></i>源：
+                    <span class="text-body-secondary">${escapeHtml(rule.source || "任意")}</span>
+                  </div>
+                  <div class="rule-address text-muted small mt-1">
+                    <i class="bi bi-arrow-down-left-circle me-1 text-primary"></i>目的：
+                    <span class="text-body-secondary">${escapeHtml(rule.destination || "任意")}</span>
+                  </div>
+                  ${detailPreview ? `<div class="rule-detail-preview mt-2">${detailPreview}</div>` : ""}
+                </div>
+              </div>
+              <div class="rule-meta d-flex flex-wrap justify-content-between align-items-center gap-3 mt-3">
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <span class="rule-number-chip">#${escapeHtml(rule.number)}</span>
+                  ${
+                    optionText
+                      ? `<span class="rule-option text-muted small"><i class="bi bi-sliders me-1"></i>${escapeHtml(
+                          optionText
+                        )}</span>`
+                      : ""
+                  }
+                </div>
+                ${buildRuleActionButtons(chain.name, rule.number)}
+              </div>
+              <div class="rule-collapse mt-3">
+                <button
+                  class="btn btn-link btn-sm ps-0 rule-collapse-toggle"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#${collapseId}"
+                  aria-expanded="false"
+                  aria-controls="${collapseId}"
+                >
+                  查看完整详情
+                </button>
+                <div class="collapse" id="${collapseId}">
+                  <div class="rule-detail-panel mt-3">
+                    ${
+                      fullDetails ||
+                      '<div class="text-muted small">无更多详情</div>'
+                    }
+                    ${rawText ? `<div class="rule-raw mt-3">${rawText}</div>` : ""}
+                  </div>
+                </div>
+              </div>
+            </div>
+          `;
+        })
         .join("");
 
       return `
-        <div class="card shadow-sm">
-          <div class="card-header d-flex justify-content-between align-items-center bg-white">
-            <div>
-              <h2 class="h5 mb-1">
-                ${chain.name}
-                <span class="chain-badge" data-chain="${chain.name}">${chain.name}</span>
-              </h2>
-              <div class="text-muted small">${headerMeta || ""}</div>
+        <section class="chain-card card shadow-sm">
+          <div class="card-body">
+            <div class="chain-card-header d-flex flex-wrap justify-content-between align-items-center gap-3">
+              <div>
+                <h3 class="h5 mb-1">
+                  <span class="chain-badge" data-chain="${escapeHtml(chain.name)}">${escapeHtml(
+                    chain.name
+                  )}</span>
+                </h3>
+                <div class="chain-meta text-muted small d-flex flex-wrap gap-3">
+                  ${metaItems.join("")}
+                </div>
+              </div>
             </div>
-            <button class="btn btn-sm btn-outline-primary" data-action="refresh">刷新此链</button>
-          </div>
-          <div class="card-body p-0">
-            <div class="table-responsive">
-              <table class="table table-hover mb-0 align-middle">
-                <thead>
-                  <tr>
-                    <th style="width: 60px">#</th>
-                    <th>目标</th>
-                    <th>协议</th>
-                    <th>选项</th>
-                    <th>源地址</th>
-                    <th>目的地址</th>
-                    <th>详细信息</th>
-                    <th style="width: 180px" class="text-end">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${rows}
-                </tbody>
-              </table>
+            <div class="rule-card-list vstack gap-3 mt-3">
+              ${rulesMarkup || '<div class="text-muted small">暂无规则。</div>'}
             </div>
           </div>
-        </div>
+        </section>
       `;
     })
     .join("");
@@ -245,7 +727,7 @@ function renderChainView(chains) {
 function renderTargetView(chains) {
   const targetMap = new Map();
   chains.forEach((chain) => {
-    chain.rules.forEach((rule) => {
+    (chain.rules || []).forEach((rule) => {
       if (!targetMap.has(rule.target)) {
         targetMap.set(rule.target, []);
       }
@@ -263,35 +745,75 @@ function renderTargetView(chains) {
 
   const sections = Array.from(targetMap.entries())
     .map(([target, entries]) => {
-      const items = entries
-        .map(({ chain, rule }) => `
-          <div class="card shadow-sm mb-3">
-            <div class="card-body">
-              <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
-                <div>
-                  <h4 class="h6 mb-1">链：<span class="chain-badge" data-chain="${chain.name}">${chain.name}</span></h4>
-                  <div class="text-muted small">规则编号：${rule.number}</div>
-                </div>
-                <div class="rule-actions">
-                  <button class="btn btn-sm btn-outline-secondary me-2" data-action="edit" data-chain="${chain.name}" data-number="${rule.number}">编辑</button>
-                  <button class="btn btn-sm btn-outline-danger" data-action="delete" data-chain="${chain.name}" data-number="${rule.number}">删除</button>
+      const visual = getTargetVisual(target);
+      const cards = entries
+        .map(({ chain, rule }) => {
+          const protocolLabel = (rule.protocol || "ALL").toUpperCase();
+          const sourcePort = getPortValue(rule, "source");
+          const destinationPort = getPortValue(rule, "destination");
+          const portSummary = buildPortSummary(sourcePort, destinationPort);
+          const detailPreview = createDetailBadges(rule.details, 3);
+          const optionText = rule.option && rule.option !== "--" ? rule.option : "";
+
+          return `
+            <div class="col">
+              <div class="target-rule-card card h-100 card-subtle">
+                <div class="card-body d-flex flex-column gap-3">
+                  <div class="d-flex justify-content-between align-items-start gap-3">
+                    <div>
+                      <div class="d-flex flex-wrap align-items-center gap-2">
+                        <span class="chain-badge" data-chain="${escapeHtml(chain.name)}">${escapeHtml(
+                          chain.name
+                        )}</span>
+                        <span class="rule-number-chip">#${escapeHtml(rule.number)}</span>
+                      </div>
+                      <div class="rule-protocol-chip mt-2">
+                        <i class="bi bi-diagram-3 me-1"></i>${escapeHtml(protocolLabel)}
+                      </div>
+                    </div>
+                    <div class="target-card-actions">
+                      ${buildRuleActionButtons(chain.name, rule.number)}
+                    </div>
+                  </div>
+                  <div class="rule-address-block text-muted small d-flex flex-column gap-1">
+                    <div>
+                      <i class="bi bi-arrow-up-right-circle me-1 text-primary"></i>源：
+                      <span class="text-body-secondary">${escapeHtml(rule.source || "任意")}</span>
+                    </div>
+                    <div>
+                      <i class="bi bi-arrow-down-left-circle me-1 text-primary"></i>目的：
+                      <span class="text-body-secondary">${escapeHtml(rule.destination || "任意")}</span>
+                    </div>
+                  </div>
+                  <div class="rule-port-summary text-muted small">
+                    <i class="bi bi-plug me-1"></i>${portSummary}
+                  </div>
+                  ${
+                    optionText
+                      ? `<div class="rule-option text-muted small"><i class="bi bi-sliders me-1"></i>${escapeHtml(
+                          optionText
+                        )}</div>`
+                      : ""
+                  }
+                  ${detailPreview ? `<div class="rule-detail-preview">${detailPreview}</div>` : ""}
                 </div>
               </div>
-              <div class="mt-3">
-                <div class="fw-semibold">源地址：${rule.source}</div>
-                <div class="fw-semibold">目的地址：${rule.destination}</div>
-                <div class="text-muted mt-2">协议：${rule.protocol}｜选项：${rule.option}</div>
-              </div>
-              <div class="mt-3">${createDetailBadges(rule.details)}</div>
             </div>
-          </div>
-        `)
+          `;
+        })
         .join("");
 
       return `
-        <section class="target-section">
-          <h3 class="mb-3">目标：${target}</h3>
-          ${items}
+        <section class="target-group">
+          <div class="target-group-header d-flex flex-wrap align-items-center gap-3">
+            <span class="${visual.badgeClass}">
+              <i class="bi ${visual.icon} me-1"></i>${escapeHtml(target)}
+            </span>
+            <span class="text-muted small">共 ${entries.length} 条规则</span>
+          </div>
+          <div class="row row-cols-1 row-cols-md-2 row-cols-xl-3 g-3 mt-2">
+            ${cards || '<div class="col"><div class="card-subtle text-muted small p-3">暂无规则</div></div>'}
+          </div>
         </section>
       `;
     })
@@ -310,7 +832,14 @@ function render() {
 }
 
 refreshButton.addEventListener("click", fetchRules);
-addRuleForm.addEventListener("submit", handleAddRule);
+if (addRuleButton) {
+  addRuleButton.addEventListener("click", () => {
+    openRuleModal({ mode: "create" });
+  });
+}
+if (ruleModalForm) {
+  ruleModalForm.addEventListener("submit", handleRuleModalSubmit);
+}
 viewChains.addEventListener("change", () => {
   if (viewChains.checked) {
     state.viewMode = "chain";
@@ -341,7 +870,7 @@ rulesContainer.addEventListener("click", (event) => {
   if (action === "delete") {
     confirmAndDelete(chain, Number(number));
   } else if (action === "edit") {
-    editRule(chain, Number(number));
+    handleEditRule(chain, Number(number));
   } else if (action === "refresh") {
     fetchRules();
   }

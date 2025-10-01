@@ -1,3 +1,9 @@
+const CHAIN_OPTIONS = ["INPUT", "OUTPUT", "FORWARD", "PREROUTING", "POSTROUTING"];
+const TARGET_OPTIONS = ["ACCEPT", "DROP", "REJECT", "LOG", "RETURN"];
+const PROTOCOL_OPTIONS = ["tcp", "udp", "icmp", "all"];
+const ADDRESS_OPTIONS = ["0.0.0.0/0", "127.0.0.1", "192.168.0.0/16", "10.0.0.0/8", "::/0"];
+const PORT_KEYS = new Set(["dpt", "dport", "spt", "sport"]);
+
 const state = {
   chains: [],
   viewMode: "chain",
@@ -12,6 +18,363 @@ const addRuleForm = document.getElementById("addRuleForm");
 const searchInput = document.getElementById("searchInput");
 const viewChains = document.getElementById("viewChains");
 const viewTargets = document.getElementById("viewTargets");
+const ruleModalElement = document.getElementById("ruleModal");
+const ruleModalForm = document.getElementById("ruleModalForm");
+const ruleModalTitle = document.getElementById("ruleModalLabel");
+const ruleModalChainSelect = document.getElementById("ruleChainSelect");
+const ruleModalTargetSelect = document.getElementById("ruleTargetSelect");
+const ruleModalProtocolSelect = document.getElementById("ruleProtocolSelect");
+const ruleModalSourceSelect = document.getElementById("ruleSourceSelect");
+const ruleModalDestinationSelect = document.getElementById("ruleDestinationSelect");
+const ruleSourcePortInput = document.getElementById("ruleSourcePortInput");
+const ruleDestinationPortInput = document.getElementById("ruleDestinationPortInput");
+const ruleAdvancedInput = document.getElementById("ruleAdvancedInput");
+const ruleModalSaveButton = document.getElementById("ruleModalSaveButton");
+const ruleModal = ruleModalElement ? new bootstrap.Modal(ruleModalElement) : null;
+
+let ruleModalContext = null;
+
+function uniqueOptions(...groups) {
+  const seen = new Set();
+  const result = [];
+  groups.forEach((group) => {
+    if (!group) {
+      return;
+    }
+    const iterable = Array.isArray(group)
+      ? group
+      : group instanceof Set
+      ? Array.from(group)
+      : [group];
+    iterable.forEach((value) => {
+      if (!value || seen.has(value)) {
+        return;
+      }
+      seen.add(value);
+      result.push(value);
+    });
+  });
+  return result;
+}
+
+function populateSelect(select, options, selectedValue = "") {
+  if (!select) {
+    return;
+  }
+  const seen = new Set();
+  select.innerHTML = "";
+
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "请选择";
+  select.appendChild(placeholder);
+
+  options.forEach((value) => {
+    if (!value || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+
+  if (selectedValue && !seen.has(selectedValue)) {
+    const option = document.createElement("option");
+    option.value = selectedValue;
+    option.textContent = selectedValue;
+    select.appendChild(option);
+    seen.add(selectedValue);
+  }
+
+  select.value = selectedValue || "";
+}
+
+function extractPort(details, key) {
+  if (!details) {
+    return "";
+  }
+  const lowerKey = key.toLowerCase();
+  const match = details.find((detail) => {
+    if (!detail) {
+      return false;
+    }
+    const detailKey = (detail.key || "").toLowerCase();
+    if (detailKey === lowerKey) {
+      return true;
+    }
+    const label = (detail.label || "").toLowerCase();
+    return label === lowerKey || label.endsWith(` ${lowerKey}`);
+  });
+  return match && match.value ? match.value : "";
+}
+
+function buildAdvancedText(rule) {
+  if (!rule) {
+    return "";
+  }
+  const segments = [];
+  if (rule.option && rule.option !== "--") {
+    segments.push(rule.option);
+  }
+  (rule.details || []).forEach((detail) => {
+    if (!detail) {
+      return;
+    }
+    const key = (detail.key || "").toLowerCase();
+    if (PORT_KEYS.has(key)) {
+      return;
+    }
+    const label = (detail.label || "").trim();
+    const value = (detail.value || "").trim();
+    if (!label && !value) {
+      return;
+    }
+    if (label && value) {
+      segments.push(`${label}:${value}`);
+    } else {
+      segments.push(label || value);
+    }
+  });
+  return segments.join(" ").trim();
+}
+
+if (ruleModalElement) {
+  ruleModalElement.addEventListener("hidden.bs.modal", () => {
+    ruleModalContext = null;
+    if (ruleModalForm) {
+      ruleModalForm.reset();
+    }
+    if (ruleModalChainSelect) {
+      ruleModalChainSelect.disabled = false;
+    }
+    if (ruleSourcePortInput) {
+      ruleSourcePortInput.value = "";
+    }
+    if (ruleDestinationPortInput) {
+      ruleDestinationPortInput.value = "";
+    }
+    if (ruleAdvancedInput) {
+      ruleAdvancedInput.value = "";
+    }
+  });
+}
+
+function openRuleModal({ mode, initialRule }) {
+  if (!ruleModal || !ruleModalForm) {
+    console.warn("Rule modal is not available in this context.");
+    return;
+  }
+
+  const preparedRule = initialRule
+    ? {
+        ...initialRule,
+        details: (initialRule.details || []).map((detail) => ({ ...detail })),
+      }
+    : null;
+
+  ruleModalContext = { mode, initialRule: preparedRule };
+  ruleModalForm.reset();
+
+  const chainOptions = uniqueOptions(
+    CHAIN_OPTIONS,
+    state.chains.map((chain) => chain.name),
+    preparedRule ? [preparedRule.chain] : []
+  );
+  const targetOptions = uniqueOptions(
+    TARGET_OPTIONS,
+    state.chains.flatMap((chain) => chain.rules.map((rule) => rule.target)),
+    preparedRule ? [preparedRule.target] : []
+  );
+  const protocolOptions = uniqueOptions(
+    PROTOCOL_OPTIONS,
+    state.chains.flatMap((chain) => chain.rules.map((rule) => rule.protocol)),
+    preparedRule ? [preparedRule.protocol] : []
+  );
+  const sourceOptions = uniqueOptions(
+    ADDRESS_OPTIONS,
+    state.chains.flatMap((chain) => chain.rules.map((rule) => rule.source)),
+    preparedRule ? [preparedRule.source] : []
+  );
+  const destinationOptions = uniqueOptions(
+    ADDRESS_OPTIONS,
+    state.chains.flatMap((chain) => chain.rules.map((rule) => rule.destination)),
+    preparedRule ? [preparedRule.destination] : []
+  );
+
+  populateSelect(
+    ruleModalChainSelect,
+    chainOptions,
+    preparedRule ? preparedRule.chain : ""
+  );
+  populateSelect(
+    ruleModalTargetSelect,
+    targetOptions,
+    preparedRule ? preparedRule.target : ""
+  );
+  populateSelect(
+    ruleModalProtocolSelect,
+    protocolOptions,
+    preparedRule ? preparedRule.protocol : ""
+  );
+  populateSelect(
+    ruleModalSourceSelect,
+    sourceOptions,
+    preparedRule ? preparedRule.source : ""
+  );
+  populateSelect(
+    ruleModalDestinationSelect,
+    destinationOptions,
+    preparedRule ? preparedRule.destination : ""
+  );
+
+  if (ruleModalChainSelect) {
+    ruleModalChainSelect.disabled = mode === "edit";
+  }
+  if (ruleModalTitle) {
+    ruleModalTitle.textContent = mode === "edit" ? "编辑规则" : "新增规则";
+  }
+  if (ruleModalSaveButton) {
+    ruleModalSaveButton.textContent = mode === "edit" ? "保存修改" : "保存";
+  }
+
+  const details = preparedRule ? preparedRule.details || [] : [];
+  if (ruleSourcePortInput) {
+    const sourcePort = preparedRule
+      ? extractPort(details, "spt") || extractPort(details, "sport")
+      : "";
+    ruleSourcePortInput.value = sourcePort;
+  }
+  if (ruleDestinationPortInput) {
+    const destinationPort = preparedRule
+      ? extractPort(details, "dpt") || extractPort(details, "dport")
+      : "";
+    ruleDestinationPortInput.value = destinationPort;
+  }
+  if (ruleAdvancedInput) {
+    ruleAdvancedInput.value = preparedRule ? buildAdvancedText(preparedRule) : "";
+  }
+
+  ruleModal.show();
+}
+
+async function handleRuleModalSubmit(event) {
+  if (!ruleModalContext) {
+    return;
+  }
+  event.preventDefault();
+
+  const { mode, initialRule } = ruleModalContext;
+  const chainValue = ruleModalChainSelect
+    ? ruleModalChainSelect.value || (initialRule ? initialRule.chain : "")
+    : initialRule?.chain || "";
+  const targetValue = ruleModalTargetSelect ? ruleModalTargetSelect.value : "";
+  const protocolValue = ruleModalProtocolSelect
+    ? ruleModalProtocolSelect.value
+    : "";
+  const sourceValue = ruleModalSourceSelect ? ruleModalSourceSelect.value : "";
+  const destinationValue = ruleModalDestinationSelect
+    ? ruleModalDestinationSelect.value
+    : "";
+  const sourcePortValue = ruleSourcePortInput ? ruleSourcePortInput.value.trim() : "";
+  const destinationPortValue = ruleDestinationPortInput
+    ? ruleDestinationPortInput.value.trim()
+    : "";
+  const advancedValue = ruleAdvancedInput ? ruleAdvancedInput.value.trim() : "";
+
+  if (!chainValue) {
+    alert("请选择链 (Chain)");
+    return;
+  }
+  if (!targetValue) {
+    alert("请选择行为 (Target)");
+    return;
+  }
+
+  const specParts = [];
+  if (protocolValue && protocolValue !== "all") {
+    specParts.push(`-p ${protocolValue}`);
+  }
+  if (sourceValue) {
+    specParts.push(`-s ${sourceValue}`);
+  }
+  if (destinationValue) {
+    specParts.push(`-d ${destinationValue}`);
+  }
+  if (sourcePortValue) {
+    specParts.push(`--sport ${sourcePortValue}`);
+  }
+  if (destinationPortValue) {
+    specParts.push(`--dport ${destinationPortValue}`);
+  }
+  specParts.push(`-j ${targetValue}`);
+
+  let specification = specParts.join(" ").trim();
+  if (advancedValue) {
+    specification = specification
+      ? `${specification} ${advancedValue}`
+      : advancedValue;
+  }
+
+  if (!specification) {
+    alert("请填写规则参数");
+    return;
+  }
+
+  const originalText = ruleModalSaveButton ? ruleModalSaveButton.textContent : "";
+  if (ruleModalSaveButton) {
+    ruleModalSaveButton.disabled = true;
+    ruleModalSaveButton.textContent = "保存中...";
+  }
+
+  hideError();
+
+  try {
+    if (mode === "edit" && initialRule) {
+      const url = `/api/rules/${encodeURIComponent(initialRule.chain)}/${initialRule.number}`;
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ specification }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "更新规则失败");
+      }
+      ruleModal.hide();
+      fetchRules();
+    } else {
+      console.warn(`Unsupported modal mode: ${mode}`);
+    }
+  } catch (error) {
+    showError(error.message);
+  } finally {
+    if (ruleModalSaveButton) {
+      ruleModalSaveButton.disabled = false;
+      ruleModalSaveButton.textContent = originalText || "保存";
+    }
+  }
+}
+
+function handleEditRule(chainName, number) {
+  const chain = state.chains.find((item) => item.name === chainName);
+  if (!chain) {
+    return;
+  }
+  const rule = chain.rules.find((item) => item.number === number);
+  if (!rule) {
+    return;
+  }
+  const initialRule = {
+    ...rule,
+    chain: chain.name,
+    details: (rule.details || []).map((detail) => ({ ...detail })),
+  };
+  openRuleModal({ mode: "edit", initialRule });
+}
 
 function setLoading(isLoading) {
   state.loading = isLoading;
@@ -90,30 +453,6 @@ function confirmAndDelete(chain, number) {
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "删除规则失败");
-      }
-      fetchRules();
-    })
-    .catch((error) => showError(error.message));
-}
-
-function editRule(chain, number) {
-  const specification = prompt(
-    `请输入替换 ${chain} 链第 ${number} 条规则的参数片段：`
-  );
-  if (!specification) {
-    return;
-  }
-  fetch(`/api/rules/${encodeURIComponent(chain)}/${number}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ specification }),
-  })
-    .then(async (response) => {
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "更新规则失败");
       }
       fetchRules();
     })
@@ -311,6 +650,9 @@ function render() {
 
 refreshButton.addEventListener("click", fetchRules);
 addRuleForm.addEventListener("submit", handleAddRule);
+if (ruleModalForm) {
+  ruleModalForm.addEventListener("submit", handleRuleModalSubmit);
+}
 viewChains.addEventListener("change", () => {
   if (viewChains.checked) {
     state.viewMode = "chain";
@@ -341,7 +683,7 @@ rulesContainer.addEventListener("click", (event) => {
   if (action === "delete") {
     confirmAndDelete(chain, Number(number));
   } else if (action === "edit") {
-    editRule(chain, Number(number));
+    handleEditRule(chain, Number(number));
   } else if (action === "refresh") {
     fetchRules();
   }

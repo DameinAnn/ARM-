@@ -47,7 +47,11 @@ def _serialize_chain(chain: FirewallChain) -> Dict[str, Any]:
                 "source": rule.source,
                 "destination": rule.destination,
                 "details": [
-                    {"label": detail.label, "value": detail.value}
+                    {
+                        "label": detail.label,
+                        "value": detail.value,
+                        **({"key": detail.key} if detail.key else {}),
+                    }
                     for detail in rule.details
                 ],
                 "raw": rule.raw,

@@ -3,29 +3,6 @@ const TARGET_OPTIONS = ["ACCEPT", "DROP", "REJECT", "LOG", "RETURN"];
 const PROTOCOL_OPTIONS = ["tcp", "udp", "icmp", "all"];
 const ADDRESS_OPTIONS = ["0.0.0.0/0", "127.0.0.1", "192.168.0.0/16", "10.0.0.0/8", "::/0"];
 const PORT_KEYS = new Set(["dpt", "dport", "spt", "sport"]);
-const TARGET_VISUALS = {
-  ACCEPT: {
-    icon: "bi-check-circle-fill",
-    badgeClass: "target-badge target-badge-accept",
-  },
-  DROP: {
-    icon: "bi-slash-circle",
-    badgeClass: "target-badge target-badge-drop",
-  },
-  REJECT: {
-    icon: "bi-x-octagon",
-    badgeClass: "target-badge target-badge-reject",
-  },
-  LOG: {
-    icon: "bi-clipboard-data",
-    badgeClass: "target-badge target-badge-log",
-  },
-  RETURN: {
-    icon: "bi-arrow-return-left",
-    badgeClass: "target-badge target-badge-return",
-  },
-};
-
 const state = {
   chains: [],
   viewMode: "chain",
@@ -77,80 +54,6 @@ function uniqueOptions(...groups) {
     });
   });
   return result;
-}
-
-function escapeHtml(value) {
-  if (value === undefined || value === null) {
-    return "";
-  }
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function getTargetVisual(target) {
-  const key = (target || "").toUpperCase();
-  return (
-    TARGET_VISUALS[key] || {
-      icon: "bi-sliders",
-      badgeClass: "target-badge target-badge-default",
-    }
-  );
-}
-
-function getPortValue(rule, type) {
-  const details = (rule && rule.details) || [];
-  if (type === "source") {
-    return extractPort(details, "spt") || extractPort(details, "sport") || "";
-  }
-  if (type === "destination") {
-    return extractPort(details, "dpt") || extractPort(details, "dport") || "";
-  }
-  return "";
-}
-
-function buildPortSummary(sourcePort, destinationPort) {
-  const parts = [];
-  if (sourcePort) {
-    parts.push(`源 ${escapeHtml(sourcePort)}`);
-  }
-  if (destinationPort) {
-    parts.push(`目的 ${escapeHtml(destinationPort)}`);
-  }
-  if (!parts.length) {
-    return "未指定端口";
-  }
-  return parts.join(" ｜ ");
-}
-
-function buildRuleActionButtons(chainName, ruleNumber) {
-  return `
-    <div class="rule-actions d-flex flex-wrap gap-2">
-      <button
-        class="btn btn-sm btn-outline-secondary"
-        data-action="edit"
-        data-chain="${escapeHtml(chainName)}"
-        data-number="${Number(ruleNumber)}"
-      >
-        编辑
-      </button>
-      <button
-        class="btn btn-sm btn-outline-danger"
-        data-action="delete"
-        data-chain="${escapeHtml(chainName)}"
-        data-number="${Number(ruleNumber)}"
-      >
-        删除
-      </button>
-    </div>
-  `;
-}
-
-function buildCollapseId(chainName, ruleNumber) {
-  return `rule-${chainName}-${ruleNumber}`.replace(/[^a-zA-Z0-9_-]/g, "-");
 }
 
 function populateSelect(select, options, selectedValue = "") {
@@ -278,11 +181,6 @@ function openRuleModal({ mode, initialRule }) {
     state.chains.map((chain) => chain.name),
     preparedRule ? [preparedRule.chain] : []
   );
-  const defaultChain = preparedRule
-    ? preparedRule.chain
-    : chainOptions.find((option) => option && option.toUpperCase() === "INPUT") ||
-      chainOptions[0] ||
-      "";
   const targetOptions = uniqueOptions(
     TARGET_OPTIONS,
     state.chains.flatMap((chain) => chain.rules.map((rule) => rule.target)),
@@ -304,7 +202,6 @@ function openRuleModal({ mode, initialRule }) {
     preparedRule ? [preparedRule.destination] : []
   );
 
-  populateSelect(ruleModalChainSelect, chainOptions, defaultChain);
   populateSelect(
     ruleModalTargetSelect,
     targetOptions,
@@ -440,23 +337,6 @@ async function handleRuleModalSubmit(event) {
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.error || "更新规则失败");
-      }
-      ruleModal.hide();
-      fetchRules();
-    } else if (mode === "create") {
-      const response = await fetch("/api/rules", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          chain: chainValue,
-          specification,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || "添加规则失败");
       }
       ruleModal.hide();
       fetchRules();
@@ -832,11 +712,6 @@ function render() {
 }
 
 refreshButton.addEventListener("click", fetchRules);
-if (addRuleButton) {
-  addRuleButton.addEventListener("click", () => {
-    openRuleModal({ mode: "create" });
-  });
-}
 if (ruleModalForm) {
   ruleModalForm.addEventListener("submit", handleRuleModalSubmit);
 }

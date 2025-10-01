@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -70,8 +71,10 @@ class FirewallClient:
         if isinstance(command, str):
             command = shlex.split(command)
         command = list(command)
-        with self._connect() as client:
-            stdin, stdout, stderr = client.exec_command(" ".join(shlex.quote(part) for part in command))
+        with closing(self._connect()) as client:
+            stdin, stdout, stderr = client.exec_command(
+                " ".join(shlex.quote(part) for part in command)
+            )
             stdout_data = stdout.read().decode("utf-8", errors="replace")
             stderr_data = stderr.read().decode("utf-8", errors="replace")
             exit_status = stdout.channel.recv_exit_status()

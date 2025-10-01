@@ -1,17 +1,21 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ARM 设备防火墙管理工具</title>
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
-      integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
-      crossorigin="anonymous"
-    />
-    <link rel="stylesheet" href="/static/css/styles.css" />
-  </head>
+    <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>ARM 设备防火墙管理工具</title>
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
+        crossorigin="anonymous"
+      />
+      <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
+      />
+      <link rel="stylesheet" href="/static/css/styles.css" />
+    </head>
   <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
       <div class="container-fluid">
@@ -19,6 +23,10 @@
         <div class="d-flex gap-2">
           <button id="refreshButton" class="btn btn-light btn-sm">
             立即刷新
+          </button>
+          <button id="addRuleButton" class="btn btn-outline-light btn-sm">
+            <i class="bi bi-plus-circle me-1"></i>
+            新增规则
           </button>
         </div>
       </div>
@@ -28,51 +36,6 @@
       <div class="row g-4">
         <section class="col-12 col-lg-4">
           <div class="card shadow-sm">
-            <div class="card-header bg-white">
-              <h2 class="h5 mb-0">新增规则</h2>
-            </div>
-            <div class="card-body">
-              <form id="addRuleForm" class="vstack gap-3">
-                <div>
-                  <label class="form-label" for="chainInput">链 (Chain)</label>
-                  <input
-                    class="form-control"
-                    id="chainInput"
-                    name="chain"
-                    placeholder="如：INPUT"
-                    required
-                  />
-                </div>
-                <div>
-                  <label class="form-label" for="specInput">规则参数</label>
-                  <textarea
-                    class="form-control"
-                    id="specInput"
-                    name="specification"
-                    rows="3"
-                    placeholder="例如：-p tcp --dport 8080 -j ACCEPT"
-                    required
-                  ></textarea>
-                  <div class="form-text">
-                    这里填写 <code>iptables</code> 命令中链名称后的参数片段。
-                  </div>
-                </div>
-                <div>
-                  <label class="form-label" for="positionInput">插入位置 (可选)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    class="form-control"
-                    id="positionInput"
-                    name="position"
-                    placeholder="不填则追加到链尾"
-                  />
-                </div>
-                <button class="btn btn-primary" type="submit">添加规则</button>
-              </form>
-            </div>
-          </div>
-          <div class="card shadow-sm mt-4">
             <div class="card-header bg-white">
               <h2 class="h5 mb-0">视图选项</h2>
             </div>
